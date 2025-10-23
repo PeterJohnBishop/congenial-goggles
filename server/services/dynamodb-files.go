@@ -25,7 +25,7 @@ func ConnectDB() (*dynamodb.Client, error) {
 		config.WithCredentialsProvider(
 			aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(accessKey, secretKey, "")),
 		),
-		config.WithClientLogMode(aws.LogRequestWithBody|aws.LogResponseWithBody),
+		//config.WithClientLogMode(aws.LogRequestWithBody|aws.LogResponseWithBody),
 	)
 	ddbClient := dynamodb.NewFromConfig(ddbCfg)
 
@@ -39,7 +39,6 @@ func CreateFilesTable(client *dynamodb.Client) error {
 		TableName: aws.String(tableName),
 	})
 	if err == nil {
-		fmt.Printf("%s table already exists\n", tableName)
 		return nil
 	}
 

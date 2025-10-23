@@ -1,6 +1,8 @@
 module congenial-goggles
 
-go 1.23.5
+go 1.24.0
+
+toolchain go1.24.9
 
 require github.com/gin-gonic/gin v1.11.0
 
@@ -22,6 +24,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.35.2 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.38.7 // indirect
 	github.com/aws/smithy-go v1.23.1 // indirect
+	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e // indirect
+	golang.org/x/time v0.14.0 // indirect
 )
 
 require (

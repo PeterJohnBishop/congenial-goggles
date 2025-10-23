@@ -2,6 +2,9 @@ package services
 
 import (
 	"context"
+	"fmt"
+	"io"
+	"log"
 	"mime/multipart"
 	"os"
 	"time"
@@ -10,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/gin-gonic/gin"
 )
 
 type UserFile struct {
@@ -42,15 +46,13 @@ func ConnectS3() (*s3.Client, error) {
 	return s3Client, nil
 }
 
-func UploadFile(filename string, fileContent multipart.File) (string, error) {
+func StreamUploadFile(fileId string, fileContent multipart.File) error {
 	bucketName := os.Getenv("AWS_BUCKET")
 	client, err := ConnectS3()
 	if err != nil {
-		return "", err
+		return err
 	}
-	presigner := s3.NewPresignClient(client)
-
-	fileKey := "uploads/" + filename
+	fileKey := "uploads/" + fileId
 
 	_, err = client.PutObject(context.TODO(), &s3.PutObjectInput{
 		Bucket: aws.String(bucketName),
@@ -58,38 +60,60 @@ func UploadFile(filename string, fileContent multipart.File) (string, error) {
 		Body:   fileContent,
 	})
 	if err != nil {
-		return "", err
+		return err
 	}
 
-	presignedReq, err := presigner.PresignGetObject(context.TODO(), &s3.GetObjectInput{
-		Bucket: aws.String(bucketName),
-		Key:    aws.String(fileKey),
-	}, s3.WithPresignExpires(15*time.Minute))
-	if err != nil {
-		return "", err
-	}
-
-	return presignedReq.URL, nil
+	return nil
 }
 
-func DownloadFile(filename string) (string, error) {
+func StreamDownloadFile(c *gin.Context, fileId string) error {
 	bucketName := os.Getenv("AWS_BUCKET")
 	client, err := ConnectS3()
 	if err != nil {
-		return "", err
+		return fmt.Errorf("failed to connect to S3: %w", err)
 	}
+
+	fileKey := "uploads/" + fileId
+
+	resp, err := client.GetObject(context.TODO(), &s3.GetObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(fileKey),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to get S3 object: %w", err)
+	}
+	defer resp.Body.Close()
+
+	c.Header("Content-Disposition", "attachment; filename="+fileId)
+	c.Header("Content-Type", *resp.ContentType)
+	c.Header("Content-Length", fmt.Sprintf("%d", resp.ContentLength))
+
+	_, err = io.Copy(c.Writer, resp.Body)
+	if err != nil {
+		log.Println("Error streaming S3 object:", err)
+		return fmt.Errorf("failed to stream file")
+	}
+
+	return nil
+}
+
+func GeneratePresignedDownloadURL(fileKey string) (string, error) {
+	bucketName := os.Getenv("AWS_BUCKET")
+	client, err := ConnectS3()
+	if err != nil {
+		return "", fmt.Errorf("failed to connect to S3: %w", err)
+	}
+
 	presignClient := s3.NewPresignClient(client)
+	expiration := 5 * time.Minute
 
-	fileKey := "uploads/" + filename
-	expiration := time.Duration(5) * time.Minute
-
-	presignedURL, err := presignClient.PresignGetObject(context.TODO(), &s3.GetObjectInput{
+	req, err := presignClient.PresignGetObject(context.TODO(), &s3.GetObjectInput{
 		Bucket: aws.String(bucketName),
 		Key:    aws.String(fileKey),
 	}, s3.WithPresignExpires(expiration))
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to generate presigned URL: %w", err)
 	}
 
-	return presignedURL.URL, nil
+	return req.URL, nil
 }

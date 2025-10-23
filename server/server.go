@@ -1,6 +1,7 @@
 package server
 
 import (
+	"congenial-goggles/server/services"
 	"log"
 	"os"
 
@@ -8,8 +9,16 @@ import (
 )
 
 func ServeGin() {
+	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
-
+	dynamoClient, err := services.ConnectDB()
+	if err != nil {
+		log.Fatalf("Failed to connect to DynamoDB: %v", err)
+	}
+	err = services.CreateFilesTable(dynamoClient)
+	if err != nil {
+		log.Fatalf("Failed to create DynamoDB table: %v", err)
+	}
 	AddPublicRoutes(r)
 
 	port := os.Getenv("PORT")
@@ -17,7 +26,7 @@ func ServeGin() {
 		port = "8080"
 	}
 	log.Printf("Server listening on :%s\n", port)
-	err := r.Run(":" + port)
+	err = r.Run(":" + port)
 	if err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
