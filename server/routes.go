@@ -3,14 +3,30 @@ package server
 import (
 	"congenial-goggles/server/middlware"
 
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/gin-gonic/gin"
 )
 
 func AddPublicRoutes(r *gin.Engine) {
-	r.Use(middlware.RateLimitMiddleware())
 	r.GET("/", Hello())
-	r.POST("/upload", Upload())
-	r.POST("/download/direct", Download())
-	r.POST("/download/url", DownloadURL())
-	r.POST("/download/qr", DownloadQR())
+}
+
+func AddDynamoDBRoutes(client *dynamodb.Client, r *gin.Engine) {
+
+	r.POST("/register", CreateNewUserReq(client))
+	r.POST("/login", AuthUserReq(client))
+	r.POST("/refresh-token", middlware.RefreshTokenHandler(client))
+
+	auth := r.Group("/", middlware.AuthMiddleware())
+	{
+		auth.GET("/users", GetAllUsersReq(client))
+		auth.GET("/users/:id", GetUserByIDReq(client))
+		auth.PUT("/users", UpdateUserReq(client))
+		auth.PUT("/users/password", UpdatePasswordReq(client))
+		auth.DELETE("/users/:id", DeleteUserReq(client))
+		auth.POST("/upload", Upload())
+		auth.POST("/download/direct", Download())
+		auth.POST("/download/url", DownloadURL())
+		auth.POST("/download/qr", DownloadQR())
+	}
 }

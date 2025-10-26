@@ -1,6 +1,7 @@
 package server
 
 import (
+	"congenial-goggles/server/middlware"
 	"congenial-goggles/server/services"
 	"log"
 	"os"
@@ -11,6 +12,8 @@ import (
 func ServeGin() {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
+	r.Use(middlware.RateLimitMiddleware())
+
 	dynamoClient, err := services.ConnectDB()
 	if err != nil {
 		log.Fatalf("Failed to connect to DynamoDB: %v", err)

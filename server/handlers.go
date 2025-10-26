@@ -2,21 +2,28 @@ package server
 
 import (
 	"bytes"
+	"congenial-goggles/server/middlware"
 	"congenial-goggles/server/services"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
+	"fmt"
 	"image/png"
 	"log"
 	"net/http"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt"
+	"github.com/google/uuid"
 	qrcode "github.com/skip2/go-qrcode"
 )
 
@@ -61,6 +68,328 @@ func Hello() gin.HandlerFunc {
 </body>
 </html>
 		`)
+	}
+}
+
+func ShortUUID() string {
+	u := uuid.New()
+	return strings.TrimRight(
+		strings.NewReplacer("-", "", "_", "", "/", "").Replace(
+			base64.URLEncoding.EncodeToString(u[:])),
+		"=",
+	)
+}
+
+func CreateNewUserReq(client *dynamodb.Client) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var user services.User
+		if err := c.ShouldBindJSON(&user); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+			return
+		}
+
+		id := ShortUUID()
+
+		email := strings.ToLower(user.Email)
+		userId := fmt.Sprintf("u_%s", id)
+
+		hashedPassword, err := middlware.HashedPassword(user.Password)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error hashing password"})
+			return
+		}
+
+		newUser := map[string]types.AttributeValue{
+			"id":       &types.AttributeValueMemberS{Value: userId},
+			"name":     &types.AttributeValueMemberS{Value: user.Name},
+			"email":    &types.AttributeValueMemberS{Value: email},
+			"password": &types.AttributeValueMemberS{Value: hashedPassword},
+		}
+
+		if err := services.CreateUser(client, "users", newUser); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		claims := middlware.UserClaims{
+			ID:        user.ID,
+			Name:      user.Name,
+			Email:     email,
+			TokenType: "access",
+			StandardClaims: jwt.StandardClaims{
+				ExpiresAt: time.Now().Add(middlware.AccessTokenTTL).Unix(),
+				IssuedAt:  time.Now().Unix(),
+				Subject:   user.ID,
+			},
+		}
+
+		accessToken, err := middlware.NewAccessToken(claims)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create access token"})
+			return
+		}
+
+		refreshClaims := jwt.StandardClaims{
+			ExpiresAt: time.Now().Add(middlware.RefreshTokenTTL).Unix(),
+			IssuedAt:  time.Now().Unix(),
+			Subject:   user.ID,
+		}
+		refreshToken, err := middlware.NewRefreshToken(refreshClaims)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create refresh token"})
+			return
+		}
+
+		c.JSON(http.StatusCreated, gin.H{
+			"message":      "User created successfully",
+			"user.id":      userId,
+			"accessToken":  accessToken,
+			"refreshToken": refreshToken,
+		})
+	}
+}
+
+func AuthUserReq(client *dynamodb.Client) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var req struct {
+			Email    string `json:"email"`
+			Password string `json:"password"`
+		}
+
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+			return
+		}
+		if req.Email == "" || req.Password == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Email and password are required"})
+			return
+		}
+
+		user, err := services.GetUserByEmail(client, "users", req.Email)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "No user found with that email"})
+			return
+		}
+
+		if user.Password == "" {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "User record missing password"})
+			return
+		}
+
+		if !middlware.CheckPasswordHash(req.Password, user.Password) {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Incorrect password"})
+			return
+		}
+
+		claims := middlware.UserClaims{
+			ID:        user.ID,
+			Name:      user.Name,
+			Email:     user.Email,
+			TokenType: "access",
+			StandardClaims: jwt.StandardClaims{
+				ExpiresAt: time.Now().Add(middlware.AccessTokenTTL).Unix(),
+				IssuedAt:  time.Now().Unix(),
+				Subject:   user.ID,
+			},
+		}
+
+		accessToken, err := middlware.NewAccessToken(claims)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create access token"})
+			return
+		}
+
+		refreshClaims := jwt.StandardClaims{
+			ExpiresAt: time.Now().Add(middlware.RefreshTokenTTL).Unix(),
+			IssuedAt:  time.Now().Unix(),
+			Subject:   user.ID,
+		}
+
+		refreshToken, err := middlware.NewRefreshToken(refreshClaims)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create refresh token"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"message":      "Login successful",
+			"accessToken":  accessToken,
+			"refreshToken": refreshToken,
+			"user":         user,
+		})
+	}
+}
+func GetAllUsersReq(client *dynamodb.Client) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		token := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+		if token == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Missing or invalid token"})
+			return
+		}
+		if middlware.ParseAccessToken(token) == nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Failed to verify token"})
+			return
+		}
+
+		resp, err := services.GetAllUsers(client, "users")
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get users"})
+			return
+		}
+
+		var users []services.User
+		for _, item := range resp {
+			var user services.User
+			if err := attributevalue.UnmarshalMap(item, &user); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to decode users"})
+				return
+			}
+			users = append(users, user)
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"message": "Users Found!",
+			"users":   users,
+		})
+	}
+}
+
+func GetUserByIDReq(client *dynamodb.Client) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		id := c.Param("id")
+
+		token := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+		if token == "" || middlware.ParseAccessToken(token) == nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Failed to verify token"})
+			return
+		}
+
+		resp, err := services.GetUserById(client, "users", id)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get user"})
+			return
+		}
+
+		var user services.User
+		if err := attributevalue.UnmarshalMap(resp, &user); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to decode user"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"message": "User Found!",
+			"user":    user,
+		})
+	}
+}
+
+func UpdateUserReq(client *dynamodb.Client) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		token := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+		if token == "" || middlware.ParseAccessToken(token) == nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Failed to verify token"})
+			return
+		}
+
+		var user services.User
+		if err := c.ShouldBindJSON(&user); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+			return
+		}
+
+		if err := services.UpdateUser(client, "users", user); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update user"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"message": "User Updated!"})
+	}
+}
+
+func UpdatePasswordReq(client *dynamodb.Client) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		token := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+		claims := middlware.ParseAccessToken(token)
+		if token == "" || claims == nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Failed to verify token"})
+			return
+		}
+
+		var req struct {
+			CurrentPassword string `json:"currentPassword"`
+			NewPassword     string `json:"newPassword"`
+		}
+
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+			return
+		}
+
+		if req.CurrentPassword == "" || req.NewPassword == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Missing current or new password"})
+			return
+		}
+
+		out, err := client.GetItem(context.TODO(), &dynamodb.GetItemInput{
+			TableName: aws.String("users"),
+			Key: map[string]types.AttributeValue{
+				"id": &types.AttributeValueMemberS{Value: claims.ID},
+			},
+		})
+
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch user"})
+			return
+		}
+
+		if out.Item == nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+			return
+		}
+
+		var user services.User
+		if err := attributevalue.UnmarshalMap(out.Item, &user); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse user record"})
+			return
+		}
+
+		if !middlware.CheckPasswordHash(req.CurrentPassword, user.Password) {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Current password is incorrect"})
+			return
+		}
+
+		hashedPassword, err := middlware.HashedPassword(req.NewPassword)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to hash new password"})
+			return
+		}
+
+		user.Password = hashedPassword
+		if err := services.UpdatePassword(client, "users", user); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update password"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"message": "Password updated successfully"})
+	}
+}
+
+func DeleteUserReq(client *dynamodb.Client) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		id := c.Param("id")
+
+		token := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+		if token == "" || middlware.ParseAccessToken(token) == nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Failed to verify token"})
+			return
+		}
+
+		if err := services.DeleteUser(client, "users", id); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete user"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"message": "User Deleted!"})
 	}
 }
 
