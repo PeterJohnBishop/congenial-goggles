@@ -106,7 +106,7 @@ func CreateNewUserReq(client *dynamodb.Client) gin.HandlerFunc {
 			"password": &types.AttributeValueMemberS{Value: hashedPassword},
 		}
 
-		if err := services.CreateUser(client, "users", newUser); err != nil {
+		if err := services.CreateUser(client, "Users", newUser); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
@@ -165,7 +165,7 @@ func AuthUserReq(client *dynamodb.Client) gin.HandlerFunc {
 			return
 		}
 
-		user, err := services.GetUserByEmail(client, "users", req.Email)
+		user, err := services.GetUserByEmail(client, "Users", req.Email)
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "No user found with that email"})
 			return
@@ -231,7 +231,7 @@ func GetAllUsersReq(client *dynamodb.Client) gin.HandlerFunc {
 			return
 		}
 
-		resp, err := services.GetAllUsers(client, "users")
+		resp, err := services.GetAllUsers(client, "Users")
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get users"})
 			return
@@ -264,7 +264,7 @@ func GetUserByIDReq(client *dynamodb.Client) gin.HandlerFunc {
 			return
 		}
 
-		resp, err := services.GetUserById(client, "users", id)
+		resp, err := services.GetUserById(client, "Users", id)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get user"})
 			return
@@ -297,7 +297,7 @@ func UpdateUserReq(client *dynamodb.Client) gin.HandlerFunc {
 			return
 		}
 
-		if err := services.UpdateUser(client, "users", user); err != nil {
+		if err := services.UpdateUser(client, "Users", user); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update user"})
 			return
 		}
@@ -331,7 +331,7 @@ func UpdatePasswordReq(client *dynamodb.Client) gin.HandlerFunc {
 		}
 
 		out, err := client.GetItem(context.TODO(), &dynamodb.GetItemInput{
-			TableName: aws.String("users"),
+			TableName: aws.String("Users"),
 			Key: map[string]types.AttributeValue{
 				"id": &types.AttributeValueMemberS{Value: claims.ID},
 			},
@@ -365,7 +365,7 @@ func UpdatePasswordReq(client *dynamodb.Client) gin.HandlerFunc {
 		}
 
 		user.Password = hashedPassword
-		if err := services.UpdatePassword(client, "users", user); err != nil {
+		if err := services.UpdatePassword(client, "Users", user); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update password"})
 			return
 		}
@@ -384,7 +384,7 @@ func DeleteUserReq(client *dynamodb.Client) gin.HandlerFunc {
 			return
 		}
 
-		if err := services.DeleteUser(client, "users", id); err != nil {
+		if err := services.DeleteUser(client, "Users", id); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete user"})
 			return
 		}
@@ -412,6 +412,20 @@ func Upload() gin.HandlerFunc {
 			return
 		}
 
+		claims, exists := c.Get("claims")
+		if !exists {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "missing JWT claims"})
+			return
+		}
+
+		jwtClaims := claims.(*middlware.UserClaims)
+
+		userId := jwtClaims.ID
+		if userId == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "userId not found in JWT"})
+			return
+		}
+
 		secret := c.PostForm("shared_secret")
 		if secret == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "missing secret"})
@@ -425,15 +439,12 @@ func Upload() gin.HandlerFunc {
 		}
 		defer file.Close()
 
+		// Generate file ID using HMAC with secret
 		mac := hmac.New(sha256.New, []byte(secret))
 		mac.Write([]byte(header.Filename))
-		fileId := hex.EncodeToString(mac.Sum(nil))
-		ext := getFileExtension(header.Filename)
-		if ext != "" {
-			fileId = fileId + "." + ext
-		}
+		id := hex.EncodeToString(mac.Sum(nil))
 
-		err = services.StreamUploadFile(fileId, file)
+		err = services.StreamUploadFile(id, file)
 		if err != nil {
 			log.Printf("Upload failed: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to upload file"})
@@ -447,7 +458,7 @@ func Upload() gin.HandlerFunc {
 			return
 		}
 
-		err = services.CreateFile(dynamoClient, "Files", fileId, filepath.Base(header.Filename))
+		err = services.CreateFile(dynamoClient, "Files", id, filepath.Base(header.Filename), userId)
 		if err != nil {
 			log.Printf("Failed to save metadata: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save file metadata"})
@@ -456,7 +467,8 @@ func Upload() gin.HandlerFunc {
 
 		c.JSON(http.StatusOK, gin.H{
 			"message": "File uploaded successfully",
-			"fileId":  fileId,
+			"fileId":  id,
+			"userId":  userId,
 		})
 	}
 }

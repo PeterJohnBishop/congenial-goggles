@@ -46,13 +46,13 @@ func ConnectS3() (*s3.Client, error) {
 	return s3Client, nil
 }
 
-func StreamUploadFile(fileId string, fileContent multipart.File) error {
+func StreamUploadFile(fileName string, fileContent multipart.File) error {
 	bucketName := os.Getenv("AWS_BUCKET")
 	client, err := ConnectS3()
 	if err != nil {
 		return err
 	}
-	fileKey := "uploads/" + fileId
+	fileKey := "uploads/" + fileName
 
 	_, err = client.PutObject(context.TODO(), &s3.PutObjectInput{
 		Bucket: aws.String(bucketName),
@@ -66,14 +66,14 @@ func StreamUploadFile(fileId string, fileContent multipart.File) error {
 	return nil
 }
 
-func StreamDownloadFile(c *gin.Context, fileId string) error {
+func StreamDownloadFile(c *gin.Context, fileName string) error {
 	bucketName := os.Getenv("AWS_BUCKET")
 	client, err := ConnectS3()
 	if err != nil {
 		return fmt.Errorf("failed to connect to S3: %w", err)
 	}
 
-	fileKey := "uploads/" + fileId
+	fileKey := "uploads/" + fileName
 
 	resp, err := client.GetObject(context.TODO(), &s3.GetObjectInput{
 		Bucket: aws.String(bucketName),
@@ -84,7 +84,7 @@ func StreamDownloadFile(c *gin.Context, fileId string) error {
 	}
 	defer resp.Body.Close()
 
-	c.Header("Content-Disposition", "attachment; filename="+fileId)
+	c.Header("Content-Disposition", "attachment; filename="+fileName)
 	c.Header("Content-Type", *resp.ContentType)
 	c.Header("Content-Length", fmt.Sprintf("%d", resp.ContentLength))
 

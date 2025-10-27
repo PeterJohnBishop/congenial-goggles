@@ -7,16 +7,14 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func AddPublicRoutes(r *gin.Engine) {
+func AddPublicRoutes(client *dynamodb.Client, r *gin.Engine) {
 	r.GET("/", Hello())
-}
-
-func AddDynamoDBRoutes(client *dynamodb.Client, r *gin.Engine) {
-
 	r.POST("/register", CreateNewUserReq(client))
 	r.POST("/login", AuthUserReq(client))
 	r.POST("/refresh-token", middlware.RefreshTokenHandler(client))
+}
 
+func AddDProtectedRoutes(client *dynamodb.Client, r *gin.Engine) {
 	auth := r.Group("/", middlware.AuthMiddleware())
 	{
 		auth.GET("/users", GetAllUsersReq(client))

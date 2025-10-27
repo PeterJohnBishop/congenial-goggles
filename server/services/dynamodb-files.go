@@ -11,8 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 )
 
-func CreateFilesTable(client *dynamodb.Client) error {
-	tableName := "Files"
+func CreateFilesTable(client *dynamodb.Client, tableName string) error {
 
 	_, err := client.DescribeTable(context.TODO(), &dynamodb.DescribeTableInput{
 		TableName: aws.String(tableName),
@@ -32,14 +31,32 @@ func CreateFilesTable(client *dynamodb.Client) error {
 		TableName: aws.String(tableName),
 		AttributeDefinitions: []types.AttributeDefinition{
 			{
-				AttributeName: aws.String("fileId"),
+				AttributeName: aws.String("id"),
+				AttributeType: types.ScalarAttributeTypeS,
+			},
+			{
+				AttributeName: aws.String("user"),
 				AttributeType: types.ScalarAttributeTypeS,
 			},
 		},
 		KeySchema: []types.KeySchemaElement{
 			{
-				AttributeName: aws.String("fileId"),
+				AttributeName: aws.String("id"),
 				KeyType:       types.KeyTypeHash,
+			},
+		},
+		GlobalSecondaryIndexes: []types.GlobalSecondaryIndex{
+			{
+				IndexName: aws.String("user-index"), // Name of the GSI
+				KeySchema: []types.KeySchemaElement{
+					{
+						AttributeName: aws.String("user"),
+						KeyType:       types.KeyTypeHash, // Partition Key for GSI
+					},
+				},
+				Projection: &types.Projection{
+					ProjectionType: types.ProjectionTypeAll, // include all attributes
+				},
 			},
 		},
 		BillingMode: types.BillingModePayPerRequest,
@@ -60,27 +77,28 @@ func CreateFilesTable(client *dynamodb.Client) error {
 	return nil
 }
 
-func CreateFile(client *dynamodb.Client, tableName, fileId, fileName string) error {
+func CreateFile(client *dynamodb.Client, tableName, id, fileName, user string) error {
 	_, err := client.PutItem(context.TODO(), &dynamodb.PutItemInput{
 		TableName: aws.String(tableName),
 		Item: map[string]types.AttributeValue{
-			"fileId":   &types.AttributeValueMemberS{Value: fileId},
+			"id":       &types.AttributeValueMemberS{Value: id},
 			"fileName": &types.AttributeValueMemberS{Value: fileName},
+			"user":     &types.AttributeValueMemberS{Value: user},
 		},
 	})
 	if err != nil {
 		return fmt.Errorf("failed to insert file: %w", err)
 	}
 
-	fmt.Println("File created:", fileId)
+	fmt.Println("File created:", id)
 	return nil
 }
 
-func GetFile(client *dynamodb.Client, tableName, fileId string) (map[string]types.AttributeValue, error) {
+func GetFile(client *dynamodb.Client, tableName, id string) (map[string]types.AttributeValue, error) {
 	out, err := client.GetItem(context.TODO(), &dynamodb.GetItemInput{
 		TableName: aws.String(tableName),
 		Key: map[string]types.AttributeValue{
-			"fileId": &types.AttributeValueMemberS{Value: fileId},
+			"fileId": &types.AttributeValueMemberS{Value: id},
 		},
 	})
 	if err != nil {
@@ -88,7 +106,7 @@ func GetFile(client *dynamodb.Client, tableName, fileId string) (map[string]type
 	}
 
 	if out.Item == nil {
-		return nil, fmt.Errorf("file not found: %s", fileId)
+		return nil, fmt.Errorf("file not found: %s", id)
 	}
 
 	return out.Item, nil

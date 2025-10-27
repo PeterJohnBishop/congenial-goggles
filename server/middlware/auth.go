@@ -175,7 +175,7 @@ func RefreshTokenHandler(client *dynamodb.Client) gin.HandlerFunc {
 		userID := claims.Subject
 
 		out, err := client.GetItem(context.TODO(), &dynamodb.GetItemInput{
-			TableName: aws.String("users"), // adjust table name
+			TableName: aws.String("Users"), // adjust table name
 			Key: map[string]types.AttributeValue{
 				"id": &types.AttributeValueMemberS{Value: userID},
 			},

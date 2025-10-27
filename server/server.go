@@ -18,11 +18,16 @@ func ServeGin() {
 	if err != nil {
 		log.Fatalf("Failed to connect to DynamoDB: %v", err)
 	}
-	err = services.CreateFilesTable(dynamoClient)
+	err = services.CreateUsersTable(dynamoClient, "Users")
 	if err != nil {
 		log.Fatalf("Failed to create DynamoDB table: %v", err)
 	}
-	AddPublicRoutes(r)
+	err = services.CreateFilesTable(dynamoClient, "Files")
+	if err != nil {
+		log.Fatalf("Failed to create DynamoDB table: %v", err)
+	}
+	AddPublicRoutes(dynamoClient, r)
+	AddDProtectedRoutes(dynamoClient, r)
 
 	port := os.Getenv("PORT")
 	if port == "" {

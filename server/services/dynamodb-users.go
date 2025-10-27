@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -20,7 +21,22 @@ type User struct {
 }
 
 func CreateUsersTable(client *dynamodb.Client, tableName string) error {
-	_, err := client.CreateTable(context.TODO(), &dynamodb.CreateTableInput{
+
+	_, err := client.DescribeTable(context.TODO(), &dynamodb.DescribeTableInput{
+		TableName: aws.String(tableName),
+	})
+	if err == nil {
+		return nil
+	}
+
+	var notFound *types.ResourceNotFoundException
+	if !errors.As(err, &notFound) {
+		return fmt.Errorf("error checking table existence: %w", err)
+	}
+
+	fmt.Println("Users table not found — creating now...")
+
+	_, err = client.CreateTable(context.TODO(), &dynamodb.CreateTableInput{
 		TableName: aws.String(tableName),
 		AttributeDefinitions: []types.AttributeDefinition{
 			{
