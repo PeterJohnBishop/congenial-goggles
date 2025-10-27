@@ -35,6 +35,10 @@ func CreateFilesTable(client *dynamodb.Client, tableName string) error {
 				AttributeType: types.ScalarAttributeTypeS,
 			},
 			{
+				AttributeName: aws.String("fileName"),
+				AttributeType: types.ScalarAttributeTypeS,
+			},
+			{
 				AttributeName: aws.String("user"),
 				AttributeType: types.ScalarAttributeTypeS,
 			},
@@ -51,6 +55,18 @@ func CreateFilesTable(client *dynamodb.Client, tableName string) error {
 				KeySchema: []types.KeySchemaElement{
 					{
 						AttributeName: aws.String("user"),
+						KeyType:       types.KeyTypeHash, // Partition Key for GSI
+					},
+				},
+				Projection: &types.Projection{
+					ProjectionType: types.ProjectionTypeAll, // include all attributes
+				},
+			},
+			{
+				IndexName: aws.String("filename-index"), // Name of the GSI
+				KeySchema: []types.KeySchemaElement{
+					{
+						AttributeName: aws.String("fileName"),
 						KeyType:       types.KeyTypeHash, // Partition Key for GSI
 					},
 				},

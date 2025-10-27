@@ -439,12 +439,11 @@ func Upload() gin.HandlerFunc {
 		}
 		defer file.Close()
 
-		// Generate file ID using HMAC with secret
 		mac := hmac.New(sha256.New, []byte(secret))
 		mac.Write([]byte(header.Filename))
 		id := hex.EncodeToString(mac.Sum(nil))
 
-		err = services.StreamUploadFile(id, file)
+		err = services.StreamUploadFile(header.Filename, file)
 		if err != nil {
 			log.Printf("Upload failed: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to upload file"})
@@ -498,7 +497,7 @@ func Download() gin.HandlerFunc {
 		result, err := dynamoClient.GetItem(context.TODO(), &dynamodb.GetItemInput{
 			TableName: aws.String("Files"),
 			Key: map[string]types.AttributeValue{
-				"fileId": &types.AttributeValueMemberS{Value: hashedSecret},
+				"id": &types.AttributeValueMemberS{Value: hashedSecret},
 			},
 		})
 		if err != nil {
@@ -520,10 +519,7 @@ func Download() gin.HandlerFunc {
 		mac := hmac.New(sha256.New, []byte(sharedSecret))
 		mac.Write([]byte(storedFilename))
 		hashedSecretVerification := hex.EncodeToString(mac.Sum(nil))
-		ext := getFileExtension(storedFilename)
-		if ext != "" {
-			hashedSecretVerification = hashedSecretVerification + "." + ext
-		}
+
 		if hashedSecretVerification != hashedSecret {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid secret"})
 			return
@@ -563,7 +559,7 @@ func DownloadURL() gin.HandlerFunc {
 		result, err := dynamoClient.GetItem(context.TODO(), &dynamodb.GetItemInput{
 			TableName: aws.String("Files"),
 			Key: map[string]types.AttributeValue{
-				"fileId": &types.AttributeValueMemberS{Value: hashedSecret},
+				"id": &types.AttributeValueMemberS{Value: hashedSecret},
 			},
 		})
 		if err != nil {
@@ -584,15 +580,12 @@ func DownloadURL() gin.HandlerFunc {
 		mac := hmac.New(sha256.New, []byte(sharedSecret))
 		mac.Write([]byte(storedFilename))
 		expectedHash := hex.EncodeToString(mac.Sum(nil))
-		ext := getFileExtension(storedFilename)
-		if ext != "" {
-			expectedHash = expectedHash + "." + ext
-		}
+
 		if expectedHash != hashedSecret {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid secret"})
 			return
 		}
-		fileKey := "uploads/" + hashedSecret
+		fileKey := "uploads/" + storedFilename
 		url, err := services.GeneratePresignedDownloadURL(fileKey)
 		if err != nil {
 			log.Printf("Failed to generate presigned URL for %v: %v", storedFilename, err)
@@ -629,7 +622,7 @@ func DownloadQR() gin.HandlerFunc {
 		result, err := dynamoClient.GetItem(context.TODO(), &dynamodb.GetItemInput{
 			TableName: aws.String("Files"),
 			Key: map[string]types.AttributeValue{
-				"fileId": &types.AttributeValueMemberS{Value: hashedSecret},
+				"id": &types.AttributeValueMemberS{Value: hashedSecret},
 			},
 		})
 		if err != nil || result.Item == nil {
@@ -646,15 +639,12 @@ func DownloadQR() gin.HandlerFunc {
 		mac := hmac.New(sha256.New, []byte(sharedSecret))
 		mac.Write([]byte(storedFilename))
 		hashedSecretVerification := hex.EncodeToString(mac.Sum(nil))
-		ext := getFileExtension(storedFilename)
-		if ext != "" {
-			hashedSecretVerification = hashedSecretVerification + "." + ext
-		}
+
 		if hashedSecretVerification != hashedSecret {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid secret"})
 			return
 		}
-		fileKey := "uploads/" + hashedSecret
+		fileKey := "uploads/" + storedFilename
 		presignedURL, err := services.GeneratePresignedDownloadURL(fileKey)
 		if err != nil {
 			log.Printf("Failed to generate presigned URL: %v", err)
