@@ -21,9 +21,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt"
 	"github.com/google/uuid"
+	"github.com/resend/resend-go/v2"
 	qrcode "github.com/skip2/go-qrcode"
 )
 
@@ -405,7 +407,7 @@ func RemoveFileExtension(filename string) string {
 	return filename[:len(filename)-len(filepath.Ext(filename))]
 }
 
-func Upload() gin.HandlerFunc {
+func Upload(client *s3.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if c.Request.Method != http.MethodPost {
 			c.JSON(http.StatusMethodNotAllowed, gin.H{"error": "Method not allowed"})
@@ -443,7 +445,7 @@ func Upload() gin.HandlerFunc {
 		mac.Write([]byte(header.Filename))
 		id := hex.EncodeToString(mac.Sum(nil))
 
-		err = services.StreamUploadFile(header.Filename, file)
+		err = services.StreamUploadFile(client, header.Filename, file)
 		if err != nil {
 			log.Printf("Upload failed: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to upload file"})
@@ -472,7 +474,7 @@ func Upload() gin.HandlerFunc {
 	}
 }
 
-func Download() gin.HandlerFunc {
+func Download(client *s3.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if c.Request.Method != http.MethodPost {
 			c.JSON(http.StatusMethodNotAllowed, gin.H{"error": "Method not allowed"})
@@ -525,7 +527,7 @@ func Download() gin.HandlerFunc {
 			return
 		}
 
-		err = services.StreamDownloadFile(c, hashedSecret)
+		err = services.StreamDownloadFile(c, client, hashedSecret)
 		if err != nil {
 			log.Printf("Failed to stream file: %v", hashedSecret)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to stream file"})
@@ -534,7 +536,7 @@ func Download() gin.HandlerFunc {
 	}
 }
 
-func DownloadURL() gin.HandlerFunc {
+func DownloadURL(client *s3.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if c.Request.Method != http.MethodPost {
 			c.JSON(http.StatusMethodNotAllowed, gin.H{"error": "Method not allowed"})
@@ -586,7 +588,7 @@ func DownloadURL() gin.HandlerFunc {
 			return
 		}
 		fileKey := "uploads/" + storedFilename
-		url, err := services.GeneratePresignedDownloadURL(fileKey)
+		url, err := services.GeneratePresignedDownloadURL(client, fileKey)
 		if err != nil {
 			log.Printf("Failed to generate presigned URL for %v: %v", storedFilename, err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate presigned URL"})
@@ -601,7 +603,7 @@ func DownloadURL() gin.HandlerFunc {
 	}
 }
 
-func DownloadQR() gin.HandlerFunc {
+func DownloadQR(client *s3.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if c.Request.Method != http.MethodPost {
 			c.JSON(http.StatusMethodNotAllowed, gin.H{"error": "Method not allowed"})
@@ -645,7 +647,7 @@ func DownloadQR() gin.HandlerFunc {
 			return
 		}
 		fileKey := "uploads/" + storedFilename
-		presignedURL, err := services.GeneratePresignedDownloadURL(fileKey)
+		presignedURL, err := services.GeneratePresignedDownloadURL(client, fileKey)
 		if err != nil {
 			log.Printf("Failed to generate presigned URL: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate presigned URL"})
@@ -664,5 +666,15 @@ func DownloadQR() gin.HandlerFunc {
 		c.Header("Content-Type", "image/png")
 		c.Header("Content-Disposition", "inline; filename=\"download_qr.png\"")
 		c.Writer.Write(buf.Bytes())
+	}
+}
+
+func SendURLViaResend(client *resend.Client) gin.HandlerFunc {
+	return func(c *gin.Context) {
+	}
+}
+
+func SendQRViaResend(client *resend.Client) gin.HandlerFunc {
+	return func(c *gin.Context) {
 	}
 }

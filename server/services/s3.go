@@ -10,8 +10,6 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gin-gonic/gin"
 )
@@ -23,38 +21,12 @@ type UserFile struct {
 	Uploaded int64  `dynamodbav:"uploaded"`
 }
 
-func ConnectS3() (*s3.Client, error) {
-
-	accessKey := os.Getenv("AWS_ACCESS_KEY_ID")
-	secretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
-	s3_region := os.Getenv("AWS_REGION_S3")
-
-	s3Cfg, _ := config.LoadDefaultConfig(context.TODO(),
-		config.WithRegion(s3_region),
-		config.WithCredentialsProvider(
-			aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(accessKey, secretKey, "")),
-		),
-		//config.WithClientLogMode(aws.LogRequestWithBody|aws.LogResponseWithBody), <- for debugging
-	)
-	s3Client := s3.NewFromConfig(s3Cfg, func(o *s3.Options) {
-		o.UsePathStyle = true
-	})
-	_, err := s3Client.ListBuckets(context.TODO(), &s3.ListBucketsInput{})
-	if err != nil {
-		return nil, err
-	}
-	return s3Client, nil
-}
-
-func StreamUploadFile(fileName string, fileContent multipart.File) error {
+func StreamUploadFile(client *s3.Client, fileName string, fileContent multipart.File) error {
 	bucketName := os.Getenv("AWS_BUCKET")
-	client, err := ConnectS3()
-	if err != nil {
-		return err
-	}
+
 	fileKey := "uploads/" + fileName
 
-	_, err = client.PutObject(context.TODO(), &s3.PutObjectInput{
+	_, err := client.PutObject(context.TODO(), &s3.PutObjectInput{
 		Bucket: aws.String(bucketName),
 		Key:    aws.String(fileKey),
 		Body:   fileContent,
@@ -66,12 +38,8 @@ func StreamUploadFile(fileName string, fileContent multipart.File) error {
 	return nil
 }
 
-func StreamDownloadFile(c *gin.Context, fileName string) error {
+func StreamDownloadFile(c *gin.Context, client *s3.Client, fileName string) error {
 	bucketName := os.Getenv("AWS_BUCKET")
-	client, err := ConnectS3()
-	if err != nil {
-		return fmt.Errorf("failed to connect to S3: %w", err)
-	}
 
 	fileKey := "uploads/" + fileName
 
@@ -97,12 +65,8 @@ func StreamDownloadFile(c *gin.Context, fileName string) error {
 	return nil
 }
 
-func GeneratePresignedDownloadURL(fileKey string) (string, error) {
+func GeneratePresignedDownloadURL(client *s3.Client, fileKey string) (string, error) {
 	bucketName := os.Getenv("AWS_BUCKET")
-	client, err := ConnectS3()
-	if err != nil {
-		return "", fmt.Errorf("failed to connect to S3: %w", err)
-	}
 
 	presignClient := s3.NewPresignClient(client)
 	expiration := 5 * time.Minute

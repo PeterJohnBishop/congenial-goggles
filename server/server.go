@@ -14,20 +14,25 @@ func ServeGin() {
 	r := gin.Default()
 	r.Use(middlware.RateLimitMiddleware())
 
-	dynamoClient, err := services.ConnectDB()
+	resendClient := services.InitResendClient()
+	s3Client, err := services.ConnectS3()
+	if err != nil {
+		log.Fatalf("Failed to connect to S3: %v", err)
+	}
+	ddbClient, err := services.ConnectDB()
 	if err != nil {
 		log.Fatalf("Failed to connect to DynamoDB: %v", err)
 	}
-	err = services.CreateUsersTable(dynamoClient, "Users")
+	err = services.CreateUsersTable(ddbClient, "Users")
 	if err != nil {
 		log.Fatalf("Failed to create DynamoDB table: %v", err)
 	}
-	err = services.CreateFilesTable(dynamoClient, "Files")
+	err = services.CreateFilesTable(ddbClient, "Files")
 	if err != nil {
 		log.Fatalf("Failed to create DynamoDB table: %v", err)
 	}
-	AddPublicRoutes(dynamoClient, r)
-	AddDProtectedRoutes(dynamoClient, r)
+	AddPublicRoutes(ddbClient, r)
+	AddDProtectedRoutes(ddbClient, resendClient, s3Client, r)
 
 	port := os.Getenv("PORT")
 	if port == "" {
