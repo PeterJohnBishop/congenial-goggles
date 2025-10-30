@@ -21,3 +21,7 @@ the allowable file size (5GB uploads currently).
 Every incoming HTTP request to a Gin server is automatically handled in its own 
 goroutine, so upload or download requests run concurrently and don't block other 
 incomming requests.
+
+IDEA:
+
+Modify this so that it can be an authentication server that allows users to be created, authenticated, upload an avatar, and get email password resets and other notifications.

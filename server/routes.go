@@ -9,11 +9,11 @@ import (
 	"github.com/resend/resend-go/v2"
 )
 
-func AddPublicRoutes(client *dynamodb.Client, r *gin.Engine) {
+func AddPublicRoutes(ddbClient *dynamodb.Client, r *gin.Engine) {
 	r.GET("/", Hello())
-	r.POST("/register", CreateNewUserReq(client))
-	r.POST("/login", AuthUserReq(client))
-	r.POST("/refresh-token", middlware.RefreshTokenHandler(client))
+	r.POST("/register", CreateNewUserReq(ddbClient))
+	r.POST("/login", AuthUserReq(ddbClient))
+	r.POST("/refresh-token", middlware.RefreshTokenHandler(ddbClient))
 }
 
 func AddDProtectedRoutes(ddbClient *dynamodb.Client, resendClient *resend.Client, s3Client *s3.Client, r *gin.Engine) {
